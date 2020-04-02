@@ -4,6 +4,10 @@ import java.nio.file.Paths;
 import java.io.IOException;
 import javax.swing.JFrame;
 import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.BasicStroke;
+import java.awt.Color;
+import java.awt.Font;
 
 public class main {
     public static void main(String[] args) {
@@ -15,13 +19,19 @@ public class main {
         System.out.println();
         System.out.println();
 
-        System.out.println("Generating random orderings");
-        Population currentPopulation = new Population(15, 0, 0, 0, nodes);
-        currentPopulation.generateRandomOrderings(nodes.size());
-        System.out.println();
-        currentPopulation.generateNextPopulation();
 
-        Painter p = new Painter();
+        //System.out.println("Generating random orderings");
+        Population currentPopulation = new Population(nodes.size(), 15, 70, 10, nodes);
+        currentPopulation.generateRandomOrderings();
+        System.out.println();
+        for (int i = 0; i < 1000; i++) {
+            Population nextPopulation = currentPopulation.generateNextPopulation();
+            currentPopulation = nextPopulation;
+        }
+
+        Ordering o = currentPopulation.getOrdering(0);
+        double chunk = (2 * Math.PI) / (nodes.size());
+        Painter p = new Painter(o, o.generateCoordinateMap(chunk), nodes);
     }
 
     private static ArrayList<String> getNodesFromFile(String path) {
@@ -130,6 +140,34 @@ class Ordering {
         return coordinates;
     }
 
+    /**
+     * removeDuplicates removes duplicates from an ordering and replaces the duplicates
+     * with the values that are missing in the ordering
+     */
+    public void removeDuplicates() {
+        int[] rollCall = new int[order.length];
+        for (int i : order) {
+            rollCall[i] += 1;
+        }
+
+        for (int nodeIndex = 0; nodeIndex < order.length; nodeIndex++) {
+            if (rollCall[order[nodeIndex]] > 1) {
+                int replacement;
+                for (replacement = 0; replacement < rollCall.length; replacement++) {
+                    if (rollCall[replacement] == 0) {
+                        rollCall[replacement] += 1;
+                        break;
+                    }
+                }
+
+                // Lower the value in roll call to 1 before replacement otherwise replacement
+                // will be decremented again and will still be counted as missing
+                rollCall[order[nodeIndex]] -= 1;
+                order[nodeIndex] = replacement;
+            }
+        }
+    }
+
     @Override
     protected Object clone() throws CloneNotSupportedException {
         Ordering clone = new Ordering(order.clone());
@@ -153,34 +191,46 @@ class Ordering {
  * selection, reproduction, mutation and crossover
  */
 class Population {
+    private int graphSize;
     private int populationSize;
-    private int numberOfGenerations;
     private int crossoverRate;
     private int mutationRate;
+    private double totalFitnessCost;
     private double chunk;
     private NodeList nodelist;
     private Ordering[] orderings;
 
-    public Population(int populationSize, int numberOfGenerations, int crossoverRate,
-            int mutationRate, NodeList nodelist) {
+    public Population(int graphSize, int populationSize,
+            int crossoverRate, int mutationRate, NodeList nodelist) {
+        this.graphSize = graphSize;
         this.populationSize = populationSize;
-        this.numberOfGenerations = numberOfGenerations;
         this.crossoverRate = crossoverRate;
         this.mutationRate = mutationRate;
         this.nodelist = nodelist;
         orderings = new Ordering[populationSize];
+        chunk = (2 * Math.PI) / (graphSize - 1);
     }
 
     public void setOrderings(Ordering[] orderings) {
         this.orderings = orderings;
     }
 
+    public double getFitnessCost() {
+        return totalFitnessCost;
+    }
+
+    public Ordering getOrdering(int index) {
+        if(index < orderings.length) {
+            return orderings[index];
+        }
+        return null;
+    }
+
     /**
      * generateRandomOrderings is the initial method used during generation 0 to
      * create the initial Orderings
      */
-    public void generateRandomOrderings(int graphSize) {
-        chunk = (2 * Math.PI) / (graphSize - 1);
+    public void generateRandomOrderings() {
         ArrayList<Integer> baseNumbers = new ArrayList<>();
         for(int i = 0; i < graphSize; i++) {
             baseNumbers.add(i);
@@ -219,8 +269,6 @@ class Population {
                 // Unable to perform crossover unless there are at least two
                 // orderings left to choose from
                 if(orderPositionsRemaining.size() > 1) {
-                    // Select indexes from number of remaining orders which still later
-                    // have to be changed to actual remaining ordering indexes
                     int orderRemainingIndex1 = rand.nextInt(
                             orderPositionsRemaining.size());
                     int orderRemainingIndex2 = rand.nextInt(
@@ -239,8 +287,15 @@ class Population {
                         fillOrderingsIndex++;
                     }
 
-                    orderPositionsRemaining.remove(orderRemainingIndex1);
-                    orderPositionsRemaining.remove(orderRemainingIndex2);
+                    // Removing two indexes can cause an out of bounds error
+                    // Solution is to remove by largest index first
+                    if (orderRemainingIndex1 > orderRemainingIndex2) {
+                        orderPositionsRemaining.remove(orderRemainingIndex1);
+                        orderPositionsRemaining.remove(orderRemainingIndex2);
+                    } else {
+                        orderPositionsRemaining.remove(orderRemainingIndex2);
+                        orderPositionsRemaining.remove(orderRemainingIndex1);
+                    }
 
                 }
             } else if (probability < (crossoverRate + mutationRate)) {
@@ -258,14 +313,14 @@ class Population {
             }
         }
 
-        Population nextPopulation = new Population(populationSize, numberOfGenerations,
-                crossoverRate, mutationRate, nodelist);
+        Population nextPopulation = new Population(graphSize, populationSize, crossoverRate,
+                mutationRate, nodelist);
         nextPopulation.setOrderings(nextGenerationOrderings);
 
-        System.out.println("Next Gen orderings");
-        for(int i = 0; i < nextGenerationOrderings.length; i++) {
-            System.out.println((i + 1)  + " => " + nextGenerationOrderings[i]);
-        }
+        //System.out.println("Next Gen orderings");
+        //for(int i = 0; i < nextGenerationOrderings.length; i++) {
+            //System.out.println((i + 1)  + " => " + nextGenerationOrderings[i]);
+        //}
 
         return nextPopulation;
     }
@@ -275,9 +330,11 @@ class Population {
      * array and calculates that orderings fitness cost
      */
     private void calculateFitnessForAllOrderings() {
+        double totalFitnessCost = 0;
         for(Ordering ordering : orderings) {
-            calculateOrderingFitness(ordering, chunk);
+            totalFitnessCost += calculateOrderingFitness(ordering, chunk);
         }
+        this.totalFitnessCost = totalFitnessCost;
     }
 
     /**
@@ -292,9 +349,8 @@ class Population {
             }
         });
 
-        Ordering[] topThird = Arrays.copyOfRange(orderings, 0,
-                (int)(populationSize / 3));
-        int lastThirdStartIndex = (int)((populationSize / 3) * 2);
+        Ordering[] topThird = Arrays.copyOfRange(orderings, 0, populationSize / 3);
+        int lastThirdStartIndex = orderings.length - topThird.length;
         for(int i = lastThirdStartIndex, j = 0; i < populationSize; i++, j++) {
             orderings[i] = topThird[j];
         }
@@ -304,7 +360,7 @@ class Population {
      * CalculateOrderingFitness calculates the fitness for a single ordering
      * by summing the length of all edges
      */
-    private void calculateOrderingFitness(Ordering ordering, double chunk) {
+    private double calculateOrderingFitness(Ordering ordering, double chunk) {
         double fitnessCost = 0;
         Map<Integer, double[]> coordinates = ordering.generateCoordinateMap(chunk);
 
@@ -313,6 +369,8 @@ class Population {
             ArrayList<Integer> nodeConnections = node.getTails();
 
             for(Integer nodeValue : nodeConnections) {
+                // to ensure connection distances are only counted once dont calculate distance of nodes less than current node value
+                // as they are assumed to already have been calculated
                 if(node.getNum() < nodeValue) {
                     Node connectedNode = nodelist.getNode(nodeValue);
                     double[] nodePoint = coordinates.get(node.getNum());
@@ -323,7 +381,9 @@ class Population {
                 }
             }
         }
+
         ordering.setFitnessCost(fitnessCost);
+        return fitnessCost;
     }
 
     /**
@@ -350,8 +410,12 @@ class Population {
 
         Ordering[] splitOrdering1 = splitOrdering(ordering1, cuttingPoint);
         Ordering[] splitOrdering2 = splitOrdering(ordering2, cuttingPoint);
+
         Ordering mixedOrdering1 = mergeOrderings(splitOrdering1[0], splitOrdering2[1]);
         Ordering mixedOrdering2 = mergeOrderings(splitOrdering2[0], splitOrdering1[1]);
+        mixedOrdering1.removeDuplicates();
+        mixedOrdering2.removeDuplicates();
+
         ArrayList<Ordering> orderingList = new ArrayList<Ordering>();
         orderingList.add(mixedOrdering1);
         orderingList.add(mixedOrdering2);
@@ -426,6 +490,26 @@ class Population {
         return new Ordering(mergedOrdering);
     }
 
+    public void getBestFromGeneration() {
+        Ordering[] orderingsCopy = new Ordering[populationSize];
+        for (int i = 0; i < orderings.length; i++) {
+            Ordering ordering = null;
+            try {
+                ordering = (Ordering)orderings[i].clone();
+                orderingsCopy[i] = ordering;
+            } catch(CloneNotSupportedException e) {
+                e.printStackTrace();
+            }
+        }
+
+        Arrays.sort(orderingsCopy, new Comparator<Ordering>() {
+            @Override
+            public int compare(Ordering o1, Ordering o2) {
+                return Double.compare(o1.getFitnessCost(), o2.getFitnessCost());
+            }
+        });
+    }
+
 }
 
 
@@ -480,15 +564,15 @@ class NodeList {
     }
 
     public void printAdjacencyMatrix() {
-        HashMap<Integer, ArrayList<Integer>> nodeTailMap
-            = new HashMap<Integer, ArrayList<Integer>>();
+        HashMap<Integer, ArrayList<Integer>> nodeTailMap = new HashMap<Integer, ArrayList<Integer>>();
         for(Node n : nodes) {
             nodeTailMap.put(n.getNum(), n.getTails());
         }
 
         //Print top bar of adjacency matrix
         System.out.printf("%3s", " |");
-        nodeTailMap.forEach((k, v) -> System.out.printf("%3s", k + "|"));
+        //nodeTailMap.forEach((k, v) -> System.out.printf("%3s", k + "|"));
+        for (int i = 0; i < nodes.size(); i++) System.out.printf("%3s", i + "|");
         System.out.println();
         System.out.println("--+".repeat(19));
 
@@ -558,15 +642,18 @@ class Painter extends JFrame {
     private static final int HEIGHT = 960;
     private Ordering ordering;
     private Map<Integer, double[]> coordinates;
+    private NodeList nodelist;
 
-    //public Painter(Ordering ordering, Map<Integer, double[]> coordinates) {
-        //this.ordering = ordering;
-        //this.coordinates = coordinates;
-        //setTitle(TITLE);
-        //setSize(WIDTH, HEIGHT);
-        //setVisible(true);
-        //setDefaultCloseOperation(EXIT_ON_CLOSE);
-    //}
+    public Painter(Ordering ordering, Map<Integer, double[]> coordinates, NodeList nodelist) {
+        this.ordering = ordering;
+        this.coordinates = coordinates;
+        this.nodelist = nodelist;
+        setTitle(TITLE);
+        setSize(WIDTH, HEIGHT);
+        setResizable(false);
+        setVisible(true);
+        setDefaultCloseOperation(EXIT_ON_CLOSE);
+    }
 
     public Painter() {
         setTitle(TITLE);
@@ -577,7 +664,50 @@ class Painter extends JFrame {
 
     @Override
     public void paint(Graphics g) {
-        int radius = 150;
+        Graphics2D g2 = (Graphics2D)g;
+        int radius = 250;
+        int mov = WIDTH/2;
 
+        g2.setFont(new Font("TimesRoman", Font.BOLD, 24));
+        g2.drawString(ordering.toString(), WIDTH/2 - 300, 100);
+        g2.setStroke(new BasicStroke(2));
+        g2.setColor(Color.red);
+        g2.drawOval((WIDTH/2)-250, (HEIGHT/2)-250, 500, 500);
+        g2.setColor(Color.black);
+        for(int i = 0; i < ordering.length; i++) {
+            Node node = nodelist.getNode(ordering.get(i));
+            ArrayList<Integer> nodeConnections = node.getTails();
+            double[] nodePoint = coordinates.get(node.getNum());
+
+            g2.setStroke(new BasicStroke(4));
+            if (i < ordering.length / 2) {
+                g2.drawString(
+                        Integer.toString(node.getNum()),
+                        (int)(nodePoint[0] * radius) + mov + 7,
+                        (int)(nodePoint[1] * radius) + mov + 7);
+            } else {
+                g2.drawString(
+                        Integer.toString(node.getNum()),
+                        (int)(nodePoint[0] * radius) + mov - 14,
+                        (int)(nodePoint[1] * radius) + mov - 14);
+            }
+
+            g2.setColor(Color.blue);
+            g2.fillOval(
+                    (int)(nodePoint[0] * radius) + mov - 7,
+                    (int)(nodePoint[1] * radius) + mov - 7,
+                    14,
+                    14);
+            for(Integer nodeValue : nodeConnections) {
+                double[] connectionPoint = coordinates.get(nodeValue);
+                g2.setColor(Color.black);
+                g2.setStroke(new BasicStroke(3));
+                g2.drawLine(
+                        (int)(nodePoint[0] * radius) + mov,
+                        (int)(nodePoint[1] * radius) + mov,
+                        (int)(connectionPoint[0] * radius) + mov,
+                        (int)(connectionPoint[1] * radius) + mov);
+            }
+        }
     }
 }
