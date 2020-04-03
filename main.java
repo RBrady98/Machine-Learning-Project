@@ -3,13 +3,29 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.io.IOException;
 import javax.swing.JFrame;
+import javax.swing.JPanel;
+import javax.swing.JLabel;
+import javax.swing.JButton;
+import javax.swing.BorderFactory;
+import javax.swing.BoxLayout;
+import javax.swing.Box;
+import javax.swing.JOptionPane;
+import java.awt.event.ActionListener;
+import java.awt.event.ActionEvent;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.BasicStroke;
 import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.Font;
 
 public class main {
+    private static Population currentPopulation;
+    private static Population nextPopulation;
+    private static GUI gui;
+    private static int numOfGenerations;
+    private static int currentGeneration;
+
     public static void main(String[] args) {
         ArrayList<String> edgeStrings = getNodesFromFile("input.txt");
         NodeList nodes = generateNodeList(edgeStrings);
@@ -19,19 +35,47 @@ public class main {
         System.out.println();
         System.out.println();
 
+        numOfGenerations = getInput("Number of generations", 10000);
+        int populationSize = getInput("Population Size", 1000);
+        int crossoverRate = getInput("Crossover Rate", 100);
+        int mutationRate = getInput(
+                "Mutation Rate (less than " + (100 - crossoverRate) + ")",
+                100 - crossoverRate);
+
 
         //System.out.println("Generating random orderings");
-        Population currentPopulation = new Population(nodes.size(), 15, 70, 10, nodes);
+        currentPopulation = new Population(nodes.size(), populationSize, crossoverRate,
+                mutationRate, nodes);
         currentPopulation.generateRandomOrderings();
-        System.out.println();
-        for (int i = 0; i < 1000; i++) {
-            Population nextPopulation = currentPopulation.generateNextPopulation();
-            currentPopulation = nextPopulation;
-        }
+        gui = new GUI(currentPopulation, nodes, 5, new ButtonListener());
+    }
 
-        Ordering o = currentPopulation.getOrdering(0);
-        double chunk = (2 * Math.PI) / (nodes.size());
-        Painter p = new Painter(o, o.generateCoordinateMap(chunk), nodes);
+    static class ButtonListener implements ActionListener {
+        public ButtonListener(){};
+
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            if(e.getActionCommand().equals("Next Generation")) {
+                nextGeneration();
+                Ordering o = currentPopulation.getBestFromGeneration();
+                gui.update(o, o.getFitnessCost(), ++currentGeneration);
+            } else if(e.getActionCommand().equals("Last Generation")) {
+                for(;currentGeneration < numOfGenerations; ++currentGeneration) {
+                    nextGeneration();
+                }
+                Ordering o = currentPopulation.getBestFromGeneration();
+                gui.update(o, o.getFitnessCost(), currentGeneration);
+            }
+        }
+    }
+
+    private static void nextGeneration() {
+        if(nextPopulation == null) {
+            nextPopulation = currentPopulation.generateNextPopulation();
+        } else {
+            currentPopulation = nextPopulation;
+            nextPopulation = currentPopulation.generateNextPopulation();
+        }
     }
 
     private static ArrayList<String> getNodesFromFile(String path) {
@@ -75,6 +119,29 @@ public class main {
             }
         }
         return nodes;
+    }
+
+    private static int getInput(String inputTitle, int max) {
+        String inputString = JOptionPane.showInputDialog(inputTitle);
+        if (inputString == null) System.exit(0);
+        while (!isInputValid(inputString, max)) {
+            inputString = JOptionPane.showInputDialog(inputTitle);
+        }
+        return Integer.parseInt(inputString);
+    }
+
+    private static boolean isInputValid(String s, int max) {
+        try {
+            int i = Integer.parseInt(s);
+            if (0 < i && i < max) {
+                return true;
+            }
+            throw new NumberFormatException();
+        } catch(NumberFormatException e) {
+            JOptionPane.showMessageDialog(null,
+                    "Value must be an integer less than " + max);
+        }
+        return false;
     }
 }
 
@@ -208,7 +275,7 @@ class Population {
         this.mutationRate = mutationRate;
         this.nodelist = nodelist;
         orderings = new Ordering[populationSize];
-        chunk = (2 * Math.PI) / (graphSize - 1);
+        chunk = (2 * Math.PI) / graphSize;
     }
 
     public void setOrderings(Ordering[] orderings) {
@@ -224,6 +291,10 @@ class Population {
             return orderings[index];
         }
         return null;
+    }
+
+    public double getChunk() {
+        return chunk;
     }
 
     /**
@@ -490,7 +561,7 @@ class Population {
         return new Ordering(mergedOrdering);
     }
 
-    public void getBestFromGeneration() {
+    public Ordering getBestFromGeneration() {
         Ordering[] orderingsCopy = new Ordering[populationSize];
         for (int i = 0; i < orderings.length; i++) {
             Ordering ordering = null;
@@ -508,6 +579,7 @@ class Population {
                 return Double.compare(o1.getFitnessCost(), o2.getFitnessCost());
             }
         });
+        return orderingsCopy[0];
     }
 
 }
@@ -636,78 +708,170 @@ class Node {
     }
 }
 
-class Painter extends JFrame {
-    private static final String TITLE = "Graph Visualisation";
+class GUI extends JFrame {
     private static final int WIDTH = 960;
     private static final int HEIGHT = 960;
-    private Ordering ordering;
-    private Map<Integer, double[]> coordinates;
-    private NodeList nodelist;
+    private static final String TITLE = "Graph Visualisation";
 
-    public Painter(Ordering ordering, Map<Integer, double[]> coordinates, NodeList nodelist) {
-        this.ordering = ordering;
-        this.coordinates = coordinates;
+    private Population initialPopulation;
+    private Ordering bestOrdering;
+    private NodeList nodelist;
+    private int generations;
+
+    private JPanel mainPanel;
+    private JPanel bottomPanel;
+    private Painter graphPainter;
+    private JLabel orderingLabel;
+    private JLabel currentGenerationLabel;
+    private JLabel bestOrderingFitnessCost;
+    private JButton generateNextPopulationButton;
+    private JButton generateFinalPopulationButton;
+
+    public GUI(Population initialPopulation, NodeList nodelist,
+            int generations, ActionListener listener) {
+        super(TITLE);
+        this.initialPopulation = initialPopulation;
         this.nodelist = nodelist;
-        setTitle(TITLE);
         setSize(WIDTH, HEIGHT);
-        setResizable(false);
-        setVisible(true);
         setDefaultCloseOperation(EXIT_ON_CLOSE);
+        initMainPanel(listener);
+        setVisible(true);
     }
 
-    public Painter() {
-        setTitle(TITLE);
-        setSize(WIDTH, HEIGHT);
-        setVisible(true);
-        setDefaultCloseOperation(EXIT_ON_CLOSE);
+    public void update(Ordering ordering, double fitness, int generation) {
+        orderingLabel.setText("Current best ordering  " + ordering);
+        currentGenerationLabel.setText("Current generation: " + generation);
+        bestOrderingFitnessCost.setText("Ordering Fitness: " + fitness);
+        graphPainter.setOrdering(ordering);
+        repaint();
+    }
+
+    private void initMainPanel(ActionListener listener) {
+        mainPanel = new JPanel();
+        mainPanel.setPreferredSize(new Dimension(WIDTH, HEIGHT));
+        mainPanel.setLayout(new BoxLayout(mainPanel, BoxLayout.Y_AXIS));
+
+        orderingLabel = new JLabel("Current best ordering  "
+                + initialPopulation.getBestFromGeneration());
+        currentGenerationLabel = new JLabel("Current generation: 0");
+        bestOrderingFitnessCost = new JLabel("Ordering Fitness: ");
+        generateNextPopulationButton = new JButton("Next Generation");
+        generateFinalPopulationButton = new JButton("Last Generation");
+
+        graphPainter = new Painter(initialPopulation.getOrdering(0), nodelist,
+                initialPopulation.getChunk());
+
+        bottomPanel = new JPanel();
+        bottomPanel.setLayout(new BoxLayout(bottomPanel, BoxLayout.Y_AXIS));
+        bottomPanel.setPreferredSize(new Dimension(WIDTH, 200));
+        bottomPanel.add(orderingLabel);
+        bottomPanel.add(Box.createVerticalGlue());
+        bottomPanel.add(currentGenerationLabel);
+        bottomPanel.add(Box.createVerticalGlue());
+        bottomPanel.add(bestOrderingFitnessCost);
+        bottomPanel.add(Box.createVerticalGlue());
+        bottomPanel.add(generateNextPopulationButton);
+        bottomPanel.add(Box.createVerticalGlue());
+        bottomPanel.add(generateFinalPopulationButton);
+        bottomPanel.add(Box.createVerticalGlue());
+        mainPanel.add(bottomPanel);
+        mainPanel.add(graphPainter);
+        add(mainPanel);
+
+        generateNextPopulationButton.addActionListener(listener);
+        generateFinalPopulationButton.addActionListener(listener);
+    }
+
+    //@Override
+    //public void actionPerformed(ActionEvent e) {
+        //Ordering o = initialPopulation.getOrdering(2);
+        //update(o, o.getFitnessCost(), 1);
+    //}
+}
+
+class Painter extends JPanel {
+    private static final int WIDTH = 960;
+    private static final int HEIGHT = 700;
+    private static final int RADIUS = 250;
+    private static final int SHIFTX = WIDTH/2;
+    private static final int SHIFTY = HEIGHT/2;
+
+    private Ordering ordering;
+    private NodeList nodelist;
+    private double chunk;
+    private Map<Integer, double[]> coordinates;
+
+    public Painter(Ordering ordering, NodeList nodelist, double chunk) {
+        this.ordering = ordering;
+        this.nodelist = nodelist;
+        this.chunk = chunk;
+        coordinates = ordering.generateCoordinateMap(chunk);
+        setPreferredSize(new Dimension(WIDTH, HEIGHT));
+    }
+
+    public void setOrdering(Ordering ordering) {
+        this.ordering = ordering;
+        coordinates = ordering.generateCoordinateMap(chunk);
     }
 
     @Override
-    public void paint(Graphics g) {
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
         Graphics2D g2 = (Graphics2D)g;
-        int radius = 250;
-        int mov = WIDTH/2;
 
-        g2.setFont(new Font("TimesRoman", Font.BOLD, 24));
-        g2.drawString(ordering.toString(), WIDTH/2 - 300, 100);
         g2.setStroke(new BasicStroke(2));
         g2.setColor(Color.red);
-        g2.drawOval((WIDTH/2)-250, (HEIGHT/2)-250, 500, 500);
+        g2.drawOval((WIDTH/2)-RADIUS, (HEIGHT/2)-RADIUS, RADIUS*2, RADIUS*2);
         g2.setColor(Color.black);
+
         for(int i = 0; i < ordering.length; i++) {
             Node node = nodelist.getNode(ordering.get(i));
             ArrayList<Integer> nodeConnections = node.getTails();
             double[] nodePoint = coordinates.get(node.getNum());
 
-            g2.setStroke(new BasicStroke(4));
-            if (i < ordering.length / 2) {
-                g2.drawString(
-                        Integer.toString(node.getNum()),
-                        (int)(nodePoint[0] * radius) + mov + 7,
-                        (int)(nodePoint[1] * radius) + mov + 7);
-            } else {
-                g2.drawString(
-                        Integer.toString(node.getNum()),
-                        (int)(nodePoint[0] * radius) + mov - 14,
-                        (int)(nodePoint[1] * radius) + mov - 14);
-            }
-
-            g2.setColor(Color.blue);
-            g2.fillOval(
-                    (int)(nodePoint[0] * radius) + mov - 7,
-                    (int)(nodePoint[1] * radius) + mov - 7,
-                    14,
-                    14);
-            for(Integer nodeValue : nodeConnections) {
-                double[] connectionPoint = coordinates.get(nodeValue);
-                g2.setColor(Color.black);
-                g2.setStroke(new BasicStroke(3));
-                g2.drawLine(
-                        (int)(nodePoint[0] * radius) + mov,
-                        (int)(nodePoint[1] * radius) + mov,
-                        (int)(connectionPoint[0] * radius) + mov,
-                        (int)(connectionPoint[1] * radius) + mov);
-            }
+            drawOrderingValue(nodePoint, i, node.getNum(), g2);
+            drawNodePoint(nodePoint, g2);
+            drawEdges(nodePoint, nodeConnections, g2);
         }
+    }
+
+    private void drawEdges(double[] nodePoint, ArrayList<Integer> connections,
+            Graphics2D g) {
+        for(Integer nodeValue : connections) {
+            double[] connectionPoint = coordinates.get(nodeValue);
+            g.setColor(Color.black);
+            g.setStroke(new BasicStroke(3));
+            g.drawLine(
+                    (int)(nodePoint[0] * RADIUS) + SHIFTX,
+                    (int)(nodePoint[1] * RADIUS) + SHIFTY,
+                    (int)(connectionPoint[0] * RADIUS) + SHIFTX,
+                    (int)(connectionPoint[1] * RADIUS) + SHIFTY);
+        }
+
+    }
+
+    private void drawOrderingValue(double[] nodePoint, int index, int label,
+            Graphics2D g) {
+        g.setStroke(new BasicStroke(4));
+        if (index < ordering.length / 2) {
+            g.drawString(
+                    Integer.toString(label),
+                    (int)(nodePoint[0] * RADIUS) + SHIFTX + 7,
+                    (int)(nodePoint[1] * RADIUS) + SHIFTY + 7);
+        } else {
+            g.drawString(
+                    Integer.toString(label),
+                    (int)(nodePoint[0] * RADIUS) + SHIFTX - 14,
+                    (int)(nodePoint[1] * RADIUS) + SHIFTY - 14);
+        }
+    }
+
+    private void drawNodePoint(double[] nodePoint, Graphics2D g) {
+        g.setColor(Color.blue);
+        g.fillOval(
+                (int)(nodePoint[0] * RADIUS) + SHIFTX - 7,
+                (int)(nodePoint[1] * RADIUS) + SHIFTY - 7,
+                14,
+                14);
     }
 }
