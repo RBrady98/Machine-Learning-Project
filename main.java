@@ -18,6 +18,7 @@ import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.geom.Line2D;
 
 public class main {
     private static Population currentPopulation;
@@ -47,6 +48,7 @@ public class main {
         currentPopulation = new Population(nodes.size(), populationSize, crossoverRate,
                 mutationRate, nodes);
         currentPopulation.generateRandomOrderings();
+        currentPopulation.setFitnessFunction(Population.FitnessFunction.TETTAMANZI);
         gui = new GUI(currentPopulation, nodes, 5, new ButtonListener());
     }
 
@@ -267,6 +269,17 @@ class Population {
     private NodeList nodelist;
     private Ordering[] orderings;
 
+    private static final double INTERSECTION_PARAM = 0.90;
+    private static final double LENGTH_DEVIATION_PARAM = 0.91;
+    private static final double ANGLE_DEVIATION_PARAM = 0.48;
+
+    public static enum FitnessFunction {
+        DEFAULT,
+        TETTAMANZI
+    }
+
+    private FitnessFunction fitnessFunction = FitnessFunction.DEFAULT;
+
     public Population(int graphSize, int populationSize,
             int crossoverRate, int mutationRate, NodeList nodelist) {
         this.graphSize = graphSize;
@@ -278,12 +291,28 @@ class Population {
         chunk = (2 * Math.PI) / graphSize;
     }
 
+    public Population(int graphSize, int populationSize,
+            int crossoverRate, int mutationRate, NodeList nodelist, Population.FitnessFunction fitnessFunc) {
+        this.graphSize = graphSize;
+        this.populationSize = populationSize;
+        this.crossoverRate = crossoverRate;
+        this.mutationRate = mutationRate;
+        this.nodelist = nodelist;
+        orderings = new Ordering[populationSize];
+        chunk = (2 * Math.PI) / graphSize;
+        fitnessFunction = fitnessFunc;
+    }
+
     public void setOrderings(Ordering[] orderings) {
         this.orderings = orderings;
     }
 
     public double getFitnessCost() {
         return totalFitnessCost;
+    }
+
+    public void setFitnessFunction(FitnessFunction ff) {
+        fitnessFunction = ff;
     }
 
     public Ordering getOrdering(int index) {
@@ -324,7 +353,11 @@ class Population {
      */
     public Population generateNextPopulation() {
         calculateFitnessForAllOrderings();
-        performSelection();
+        if(fitnessFunction == FitnessFunction.TETTAMANZI) {
+            performSelectionT();
+        } else {
+            performSelection();
+        }
 
         // Generate the next generation
         Ordering[] nextGenerationOrderings = new Ordering[populationSize];
@@ -385,7 +418,7 @@ class Population {
         }
 
         Population nextPopulation = new Population(graphSize, populationSize, crossoverRate,
-                mutationRate, nodelist);
+                mutationRate, nodelist, fitnessFunction);
         nextPopulation.setOrderings(nextGenerationOrderings);
 
         //System.out.println("Next Gen orderings");
@@ -401,11 +434,16 @@ class Population {
      * array and calculates that orderings fitness cost
      */
     private void calculateFitnessForAllOrderings() {
-        double totalFitnessCost = 0;
-        for(Ordering ordering : orderings) {
-            totalFitnessCost += calculateOrderingFitness(ordering, chunk);
+
+        if(fitnessFunction == FitnessFunction.TETTAMANZI) {
+            for(Ordering ordering : orderings) {
+                calculateOrderingFitness2(ordering);
+            }
+        } else {
+            for(Ordering ordering : orderings) {
+                totalFitnessCost += calculateOrderingFitness(ordering, chunk);
+            }
         }
-        this.totalFitnessCost = totalFitnessCost;
     }
 
     /**
@@ -420,6 +458,34 @@ class Population {
             }
         });
 
+        Ordering[] topThird = Arrays.copyOfRange(orderings, 0, populationSize / 3);
+        int lastThirdStartIndex = orderings.length - topThird.length;
+        for(int i = lastThirdStartIndex, j = 0; i < populationSize; i++, j++) {
+            orderings[i] = topThird[j];
+        }
+    }
+
+    /**
+     * performSelection removes poor orderings (high fitness cost) by replacing the
+     * worst third of the orderings with a copy of the first third of orderings
+     */
+    private void performSelectionT() {
+        Arrays.sort(orderings, new Comparator<Ordering>() {
+            @Override
+            public int compare(Ordering o1, Ordering o2) {
+                if(o1.getFitnessCost() < o2.getFitnessCost()) {
+                    return 1;
+                } else if(o2.getFitnessCost() < o1.getFitnessCost()) {
+                    return -1;
+                } else {
+                    return 0;
+                }
+            }
+        });
+
+        for(Ordering o : orderings) {
+            System.out.println(o + " " + o.getFitnessCost());
+        }
         Ordering[] topThird = Arrays.copyOfRange(orderings, 0, populationSize / 3);
         int lastThirdStartIndex = orderings.length - topThird.length;
         for(int i = lastThirdStartIndex, j = 0; i < populationSize; i++, j++) {
@@ -580,6 +646,134 @@ class Population {
             }
         });
         return orderingsCopy[0];
+    }
+
+    /* Below here are all the methods needed to implement
+     * the second fitness function based on the Tettamanzi
+     */
+    public void calculateOrderingFitness2(Ordering ordering){
+        //int crossings = 52;
+        //double meanRelativeSquareError = 10.209;
+        //double cumulativeSquareAngleDeviation = 115281.27;
+        int crossings = countEdgeCrossings(ordering);
+        double meanRelativeSquareError = calculateMeanRelativeSquareError(ordering);
+        double cumulativeSquareAngleDeviation = calculateCumulativeSquareDeviation(ordering);
+        double orderingFitness = LENGTH_DEVIATION_PARAM*(1 / (meanRelativeSquareError + 1))
+            + INTERSECTION_PARAM*(1 / (crossings + 1))
+            + ANGLE_DEVIATION_PARAM*(1 / (cumulativeSquareAngleDeviation + 1));
+        System.out.println("Fitness for Ordering:" + orderingFitness);
+        ordering.setFitnessCost(orderingFitness);
+    }
+
+    public int countEdgeCrossings(Ordering ordering){
+        int intersections = 0;
+        for (int i = 0; i < ordering.length; i++) {
+            Node node = nodelist.getNode(i); 
+
+            for(int tailVal : node.getTails()) {
+                if(tailVal < node.getNum()) continue;
+                intersections += countEdgeIntersections(node.getNum(), tailVal, ordering);
+            }
+        }
+        System.out.println("There are " + intersections/2 + " intersections in current graph");
+        // Dividing by two because each intersection is counted twice, this is the simplest way
+        // of removing double counting
+        return intersections / 2; 
+    }
+
+    private int countEdgeIntersections(int lineStart, int lineEnd, Ordering o) {
+        int intersections = 0;
+        Map<Integer, double[]> coordinates = o.generateCoordinateMap(chunk);
+        double[] lineStartPoint = coordinates.get(lineStart);
+        double[] lineEndPoint = coordinates.get(lineEnd);
+        for (int i = 0; i < o.length; i++) {
+            if(i == lineStart || i == lineEnd) continue;
+
+            Node node = nodelist.getNode(i);
+            for(int tail : node.getTails()) {
+                if(tail < node.getNum()) continue;
+                if(tail == lineStart || tail == lineEnd) continue;
+
+                double[] comparisonPointStart = coordinates.get(node.getNum());
+                double[] comparisonPointEnd = coordinates.get(tail);
+                if (Line2D.linesIntersect(
+                            lineStartPoint[0], lineStartPoint[1], lineEndPoint[0],
+                            lineEndPoint[1], comparisonPointStart[0], comparisonPointStart[1],
+                            comparisonPointEnd[0], comparisonPointEnd[1])) {
+                    intersections++;
+                            }
+            }
+        }
+        return intersections;
+    }
+    public double calculateMeanRelativeSquareError(Ordering ordering){
+        double error = 0;
+
+        Map<Integer, double[]> coordinates = ordering.generateCoordinateMap(chunk);
+
+        for(int i = 0; i < ordering.length; i++) {
+            Node node = nodelist.getNode(ordering.get(i));
+            ArrayList<Integer> nodeConnections = node.getTails();
+
+            for(Integer nodeValue : nodeConnections) {
+                // to ensure connection distances are only counted once dont calculate distance of nodes less than current node value
+                // as they are assumed to already have been calculated
+                if(node.getNum() < nodeValue) {
+                    Node connectedNode = nodelist.getNode(nodeValue);
+                    double[] nodePoint = coordinates.get(node.getNum());
+                    double[] connectionPoint = coordinates.get(connectedNode.getNum());
+                    double distanceBetweenNodes = distance(nodePoint[0], nodePoint[1],
+                            connectionPoint[0], connectionPoint[1]);
+
+                    error += Math.pow(((distanceBetweenNodes - 0.347296) / 0.347296), 2);
+                }
+            }
+        }
+        System.out.println("Mean square error of edge lengths: " + error / graphSize);
+        return error;
+    }
+
+    public double calculateCumulativeSquareDeviation(Ordering ordering){
+        double deviation = 0;
+
+        Map<Integer, double[]> coordinates = ordering.generateCoordinateMap(chunk);
+
+        for(int i = 0; i < ordering.length; i++) {
+            Node node = nodelist.getNode(i);
+            for(int orderNum = 0; orderNum < ordering.length; orderNum++) {
+                int firstNode = ordering.get(orderNum);
+                if(node.getTails().indexOf(firstNode) == -1) continue;
+                //System.out.println("First node found: " + firstNode);
+
+                for(int nextNode = orderNum + 1; nextNode < ordering.length; nextNode++) {
+                    int secondNode = ordering.get(nextNode);
+                    if(node.getTails().indexOf(secondNode) == -1) continue;
+                    double[] translatedFirstNode = translatePoint(
+                            coordinates.get(firstNode), coordinates.get(node.getNum()));
+                    double[] translatedSecondNode = translatePoint(
+                            coordinates.get(secondNode), coordinates.get(node.getNum()));
+                    double angle = angleBetweenTwoEdges(translatedFirstNode, translatedSecondNode);
+                    deviation += Math.pow(angle - (2*Math.PI) / node.getTails().size(), 2);
+                    break;
+                }
+            }
+        }
+        System.out.println("Cumulative square deviation of edge angles: " + deviation);
+        return 0;
+    }
+
+    private double angleBetweenTwoEdges(double[] edge1, double[] edge2) {
+        double edge1Magnitude = Math.sqrt(Math.pow(edge1[0], 2) + Math.pow(edge1[1], 2));
+        double edge2Magnitude = Math.sqrt(Math.pow(edge2[0], 2) + Math.pow(edge2[1], 2));
+        double dotProduct = edge1[0]*edge2[0] + edge1[1]*edge2[1];
+
+        double angle = Math.toDegrees(
+                Math.acos(dotProduct / (edge1Magnitude * edge2Magnitude)));
+        return angle;
+    }
+
+    private double[] translatePoint(double[] point, double[] offset) {
+        return new double[]{point[0] - offset[0], point[1] - offset[1]};
     }
 
 }
@@ -828,6 +1022,7 @@ class Painter extends JPanel {
             Node node = nodelist.getNode(ordering.get(i));
             ArrayList<Integer> nodeConnections = node.getTails();
             double[] nodePoint = coordinates.get(node.getNum());
+            //System.out.println(node.getNum() + ": x:" + nodePoint[0] + " y:" + nodePoint[1]);
 
             drawOrderingValue(nodePoint, i, node.getNum(), g2);
             drawNodePoint(nodePoint, g2);
@@ -843,9 +1038,9 @@ class Painter extends JPanel {
             g.setStroke(new BasicStroke(3));
             g.drawLine(
                     (int)(nodePoint[0] * RADIUS) + SHIFTX,
-                    (int)(nodePoint[1] * RADIUS) + SHIFTY,
+                    (int)(-nodePoint[1] * RADIUS) + SHIFTY,
                     (int)(connectionPoint[0] * RADIUS) + SHIFTX,
-                    (int)(connectionPoint[1] * RADIUS) + SHIFTY);
+                    (int)(-connectionPoint[1] * RADIUS) + SHIFTY);
         }
 
     }
@@ -857,12 +1052,12 @@ class Painter extends JPanel {
             g.drawString(
                     Integer.toString(label),
                     (int)(nodePoint[0] * RADIUS) + SHIFTX + 7,
-                    (int)(nodePoint[1] * RADIUS) + SHIFTY + 7);
+                    (int)(-nodePoint[1] * RADIUS) + SHIFTY + 7);
         } else {
             g.drawString(
                     Integer.toString(label),
                     (int)(nodePoint[0] * RADIUS) + SHIFTX - 14,
-                    (int)(nodePoint[1] * RADIUS) + SHIFTY - 14);
+                    (int)(-nodePoint[1] * RADIUS) + SHIFTY - 14);
         }
     }
 
@@ -870,7 +1065,7 @@ class Painter extends JPanel {
         g.setColor(Color.blue);
         g.fillOval(
                 (int)(nodePoint[0] * RADIUS) + SHIFTX - 7,
-                (int)(nodePoint[1] * RADIUS) + SHIFTY - 7,
+                (int)(-nodePoint[1] * RADIUS) + SHIFTY - 7,
                 14,
                 14);
     }
