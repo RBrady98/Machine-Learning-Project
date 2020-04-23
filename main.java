@@ -1,7 +1,14 @@
 import java.util.*;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.time.Instant;
+import java.time.Duration;
 import javax.swing.JFrame;
 import javax.swing.JPanel;
 import javax.swing.JLabel;
@@ -48,8 +55,84 @@ public class main {
         currentPopulation = new Population(nodes.size(), populationSize, crossoverRate,
                 mutationRate, nodes);
         currentPopulation.generateRandomOrderings();
-        currentPopulation.setFitnessFunction(Population.FitnessFunction.TETTAMANZI);
-        gui = new GUI(currentPopulation, nodes, 5, new ButtonListener());
+        //currentPopulation.setFitnessFunction(Population.FitnessFunction.TETTAMANZI);
+        //gui = new GUI(currentPopulation, nodes, 5, new ButtonListener());
+
+        //Generate table
+        generateResultTable(nodes.size(), nodes);
+    }
+
+    private static void generateResultTable(int nodeCount, NodeList nodes) {
+        Population currentPopulation = null;
+        Population nextPopulation = null;
+        int generations = 100;
+        int initialPopulationSize = 20;
+
+        File file = new File("results.csv");
+        FileWriter fileWriter = null;
+        BufferedWriter bufferedWriter = null;
+        try {
+            fileWriter = new FileWriter(file);
+            bufferedWriter = new BufferedWriter(fileWriter);
+            bufferedWriter.write("Population,Solved,Average Solve Generation\n");
+        } catch(IOException e) {
+            e.printStackTrace();
+        }
+
+        for(int populationSizeMultiplier = 1; populationSizeMultiplier <= 15; populationSizeMultiplier++) {
+            int generationsFoundSum = 0;
+            int solves = 0;
+            for(int run = 0; run < 10; run++) {
+                int currentGeneration = 0;
+                boolean solved = false;
+                currentPopulation = new Population(nodeCount, initialPopulationSize * populationSizeMultiplier,
+                        20, 70, nodes);
+                currentPopulation.setFitnessFunction(Population.FitnessFunction.TETTAMANZI);
+                currentPopulation.generateRandomOrderings();
+                for(;currentGeneration < 1000; ++currentGeneration) {
+                    if(nextPopulation == null) {
+                        nextPopulation = currentPopulation.generateNextPopulation();
+                    } else {
+                        currentPopulation = nextPopulation;
+                        nextPopulation = currentPopulation.generateNextPopulation();
+                    }
+
+                    Ordering o = currentPopulation.getBestFromGeneration();
+                    if(o.isSolved()) {
+                        solved = true;
+                        generationsFoundSum += currentGeneration;
+                        solves += 1;
+                        break;
+                    }
+                }
+                nextPopulation = null;
+            }
+
+            if(solves != 0) {
+                System.out.println("Solution found on average in:" + generationsFoundSum / solves);
+                System.out.println("Solves used to create average" + solves);
+            }
+            String data = "";
+            data += initialPopulationSize*populationSizeMultiplier + ",";
+            data += solves + ",";
+            if(solves > 0) {
+                data += generationsFoundSum / solves + "\n";
+            } else {
+                data += "0\n";
+            }
+
+            try {
+                bufferedWriter.write(data);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        try {
+            bufferedWriter.close();
+            fileWriter.close();
+        } catch(IOException e) {
+            e.printStackTrace();
+        }
     }
 
     static class ButtonListener implements ActionListener {
@@ -60,10 +143,16 @@ public class main {
             if(e.getActionCommand().equals("Next Generation")) {
                 nextGeneration();
                 Ordering o = currentPopulation.getBestFromGeneration();
+                if(o.isSolved()) System.out.println("Solved at generation: " + currentGeneration);
                 gui.update(o, o.getFitnessCost(), ++currentGeneration);
             } else if(e.getActionCommand().equals("Last Generation")) {
                 for(;currentGeneration < numOfGenerations; ++currentGeneration) {
                     nextGeneration();
+                    Ordering o = currentPopulation.getBestFromGeneration();
+                    if(o.isSolved()) {
+                        System.out.println("Solved at generation: " + currentGeneration);
+                        break;
+                    }
                 }
                 Ordering o = currentPopulation.getBestFromGeneration();
                 gui.update(o, o.getFitnessCost(), currentGeneration);
@@ -237,6 +326,42 @@ class Ordering {
         }
     }
 
+    public boolean isSolved() {
+        Integer[] solvedOrder = {5, 0, 6, 15, 4, 13, 1, 11, 10, 14, 12, 9, 17, 7, 3, 2, 16, 8};
+        Integer[] solvedOrder2 = {5, 6, 0, 15, 4, 13, 1, 11, 10, 14, 12, 9, 17, 7, 3, 2, 16, 8};
+        Integer[] orderAsIntegers = Arrays.stream(order).boxed().toArray(Integer[]::new);
+
+        int startIndex = -1;
+        boolean solved = true;
+        boolean started = false;
+        for(int i = 0; i < orderAsIntegers.length; i++) {
+            if(started) break;
+            if(orderAsIntegers[i] == solvedOrder[0]) {
+                startIndex = i; // If not found going forward we can skip initial search when looking back
+                started = true;
+                for(int j = 1; j < solvedOrder.length; j++) {
+                    if(orderAsIntegers[(j + i) % solvedOrder.length] != solvedOrder[j]
+                            && orderAsIntegers[(j + i) % solvedOrder.length] != solvedOrder2[j]) {
+                        solved = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if(!solved) {
+            solved = true;
+            for(int j = 1; j < solvedOrder.length; j++) {
+                if(startIndex - j < 0) startIndex = startIndex + orderAsIntegers.length;
+                if(orderAsIntegers[startIndex-j] != solvedOrder[j] && orderAsIntegers[startIndex-j] != solvedOrder2[j]) {
+                    solved = false;
+                    break;
+                }
+            }
+        }
+        return solved;
+    }
+
     @Override
     protected Object clone() throws CloneNotSupportedException {
         Ordering clone = new Ordering(order.clone());
@@ -264,14 +389,13 @@ class Population {
     private int populationSize;
     private int crossoverRate;
     private int mutationRate;
-    private double totalFitnessCost;
     private double chunk;
     private NodeList nodelist;
     private Ordering[] orderings;
 
-    private static final double INTERSECTION_PARAM = 0.90;
-    private static final double LENGTH_DEVIATION_PARAM = 0.91;
-    private static final double ANGLE_DEVIATION_PARAM = 0.48;
+    private static final double INTERSECTION_PARAM = 0.9;
+    private static final double LENGTH_DEVIATION_PARAM = 0.85;
+    private static final double ANGLE_DEVIATION_PARAM = 0.20;
 
     public static enum FitnessFunction {
         DEFAULT,
@@ -307,10 +431,6 @@ class Population {
         this.orderings = orderings;
     }
 
-    public double getFitnessCost() {
-        return totalFitnessCost;
-    }
-
     public void setFitnessFunction(FitnessFunction ff) {
         fitnessFunction = ff;
     }
@@ -339,7 +459,7 @@ class Population {
         for(int i = 0; i < orderings.length; i++) {
             Collections.shuffle(baseNumbers);
             orderings[i] = new Ordering(baseNumbers);
-            System.out.println((i + 1)  + " => " + orderings[i]);
+            //System.out.println((i + 1)  + " => " + orderings[i]);
         }
     }
 
@@ -434,15 +554,19 @@ class Population {
      * array and calculates that orderings fitness cost
      */
     private void calculateFitnessForAllOrderings() {
-
+        long totalTime = 0;
         if(fitnessFunction == FitnessFunction.TETTAMANZI) {
             for(Ordering ordering : orderings) {
-                calculateOrderingFitness2(ordering);
+                totalTime += calculateOrderingFitness2(ordering);
             }
+            double avgTimeInMillis = (totalTime / orderings.length) / 100000.0;
+            //System.out.println("Average time to compute tettamanzi fitness: " + avgTimeInMillis + "ms");
         } else {
             for(Ordering ordering : orderings) {
-                totalFitnessCost += calculateOrderingFitness(ordering, chunk);
+                totalTime += calculateOrderingFitness(ordering, chunk);
             }
+            double avgTimeInMillis = (totalTime / orderings.length) / 100000.0;
+            //System.out.println("Average time to compute fitness: " + avgTimeInMillis + "ms");
         }
     }
 
@@ -483,9 +607,6 @@ class Population {
             }
         });
 
-        for(Ordering o : orderings) {
-            System.out.println(o + " " + o.getFitnessCost());
-        }
         Ordering[] topThird = Arrays.copyOfRange(orderings, 0, populationSize / 3);
         int lastThirdStartIndex = orderings.length - topThird.length;
         for(int i = lastThirdStartIndex, j = 0; i < populationSize; i++, j++) {
@@ -497,7 +618,8 @@ class Population {
      * CalculateOrderingFitness calculates the fitness for a single ordering
      * by summing the length of all edges
      */
-    private double calculateOrderingFitness(Ordering ordering, double chunk) {
+    private long calculateOrderingFitness(Ordering ordering, double chunk) {
+        Instant start = Instant.now();
         double fitnessCost = 0;
         Map<Integer, double[]> coordinates = ordering.generateCoordinateMap(chunk);
 
@@ -519,8 +641,10 @@ class Population {
             }
         }
 
+        Instant end = Instant.now();
+        long timeDiff = Duration.between(start, end).toNanos();
         ordering.setFitnessCost(fitnessCost);
-        return fitnessCost;
+        return timeDiff;
     }
 
     /**
@@ -642,7 +766,17 @@ class Population {
         Arrays.sort(orderingsCopy, new Comparator<Ordering>() {
             @Override
             public int compare(Ordering o1, Ordering o2) {
-                return Double.compare(o1.getFitnessCost(), o2.getFitnessCost());
+                if(fitnessFunction == FitnessFunction.DEFAULT) {
+                    return Double.compare(o1.getFitnessCost(), o2.getFitnessCost());
+                } else {
+                    if(o1.getFitnessCost() < o2.getFitnessCost()) {
+                        return 1;
+                    } else if(o2.getFitnessCost() < o1.getFitnessCost()) {
+                        return -1;
+                    } else {
+                        return 0;
+                    }
+                }
             }
         });
         return orderingsCopy[0];
@@ -651,34 +785,34 @@ class Population {
     /* Below here are all the methods needed to implement
      * the second fitness function based on the Tettamanzi
      */
-    public void calculateOrderingFitness2(Ordering ordering){
-        //int crossings = 52;
-        //double meanRelativeSquareError = 10.209;
-        //double cumulativeSquareAngleDeviation = 115281.27;
+    public long calculateOrderingFitness2(Ordering ordering){
+        Instant start = Instant.now();
         int crossings = countEdgeCrossings(ordering);
         double meanRelativeSquareError = calculateMeanRelativeSquareError(ordering);
         double cumulativeSquareAngleDeviation = calculateCumulativeSquareDeviation(ordering);
-        double orderingFitness = LENGTH_DEVIATION_PARAM*(1 / (meanRelativeSquareError + 1))
-            + INTERSECTION_PARAM*(1 / (crossings + 1))
-            + ANGLE_DEVIATION_PARAM*(1 / (cumulativeSquareAngleDeviation + 1));
-        System.out.println("Fitness for Ordering:" + orderingFitness);
+        double orderingFitness = (LENGTH_DEVIATION_PARAM*(1.0 / (meanRelativeSquareError + 1.0)))
+            + (INTERSECTION_PARAM*(1.0 / (crossings + 1.0)))
+            + (ANGLE_DEVIATION_PARAM*(1.0 / (cumulativeSquareAngleDeviation + 1.0)));
+        Instant end = Instant.now();
+        long timeDiff = Duration.between(start, end).toNanos();
+
         ordering.setFitnessCost(orderingFitness);
+        return timeDiff;
     }
 
     public int countEdgeCrossings(Ordering ordering){
         int intersections = 0;
         for (int i = 0; i < ordering.length; i++) {
-            Node node = nodelist.getNode(i); 
+            Node node = nodelist.getNode(i);
 
             for(int tailVal : node.getTails()) {
                 if(tailVal < node.getNum()) continue;
                 intersections += countEdgeIntersections(node.getNum(), tailVal, ordering);
             }
         }
-        System.out.println("There are " + intersections/2 + " intersections in current graph");
         // Dividing by two because each intersection is counted twice, this is the simplest way
         // of removing double counting
-        return intersections / 2; 
+        return intersections / 2;
     }
 
     private int countEdgeIntersections(int lineStart, int lineEnd, Ordering o) {
@@ -729,7 +863,6 @@ class Population {
                 }
             }
         }
-        System.out.println("Mean square error of edge lengths: " + error / graphSize);
         return error;
     }
 
@@ -758,7 +891,6 @@ class Population {
                 }
             }
         }
-        System.out.println("Cumulative square deviation of edge angles: " + deviation);
         return 0;
     }
 
