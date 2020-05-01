@@ -55,84 +55,7 @@ public class main {
         currentPopulation = new Population(nodes.size(), populationSize, crossoverRate,
                 mutationRate, nodes);
         currentPopulation.generateRandomOrderings();
-        //currentPopulation.setFitnessFunction(Population.FitnessFunction.TETTAMANZI);
-        //gui = new GUI(currentPopulation, nodes, 5, new ButtonListener());
-
-        //Generate table
-        generateResultTable(nodes.size(), nodes);
-    }
-
-    private static void generateResultTable(int nodeCount, NodeList nodes) {
-        Population currentPopulation = null;
-        Population nextPopulation = null;
-        int generations = 100;
-        int initialPopulationSize = 20;
-
-        File file = new File("results.csv");
-        FileWriter fileWriter = null;
-        BufferedWriter bufferedWriter = null;
-        try {
-            fileWriter = new FileWriter(file);
-            bufferedWriter = new BufferedWriter(fileWriter);
-            bufferedWriter.write("Population,Solved,Average Solve Generation\n");
-        } catch(IOException e) {
-            e.printStackTrace();
-        }
-
-        for(int populationSizeMultiplier = 1; populationSizeMultiplier <= 15; populationSizeMultiplier++) {
-            int generationsFoundSum = 0;
-            int solves = 0;
-            for(int run = 0; run < 10; run++) {
-                int currentGeneration = 0;
-                boolean solved = false;
-                currentPopulation = new Population(nodeCount, initialPopulationSize * populationSizeMultiplier,
-                        20, 70, nodes);
-                currentPopulation.setFitnessFunction(Population.FitnessFunction.TETTAMANZI);
-                currentPopulation.generateRandomOrderings();
-                for(;currentGeneration < 1000; ++currentGeneration) {
-                    if(nextPopulation == null) {
-                        nextPopulation = currentPopulation.generateNextPopulation();
-                    } else {
-                        currentPopulation = nextPopulation;
-                        nextPopulation = currentPopulation.generateNextPopulation();
-                    }
-
-                    Ordering o = currentPopulation.getBestFromGeneration();
-                    if(o.isSolved()) {
-                        solved = true;
-                        generationsFoundSum += currentGeneration;
-                        solves += 1;
-                        break;
-                    }
-                }
-                nextPopulation = null;
-            }
-
-            if(solves != 0) {
-                System.out.println("Solution found on average in:" + generationsFoundSum / solves);
-                System.out.println("Solves used to create average" + solves);
-            }
-            String data = "";
-            data += initialPopulationSize*populationSizeMultiplier + ",";
-            data += solves + ",";
-            if(solves > 0) {
-                data += generationsFoundSum / solves + "\n";
-            } else {
-                data += "0\n";
-            }
-
-            try {
-                bufferedWriter.write(data);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
-        try {
-            bufferedWriter.close();
-            fileWriter.close();
-        } catch(IOException e) {
-            e.printStackTrace();
-        }
+        gui = new GUI(currentPopulation, nodes, 5, new ButtonListener());
     }
 
     static class ButtonListener implements ActionListener {
@@ -141,10 +64,14 @@ public class main {
         @Override
         public void actionPerformed(ActionEvent e) {
             if(e.getActionCommand().equals("Next Generation")) {
-                nextGeneration();
-                Ordering o = currentPopulation.getBestFromGeneration();
-                if(o.isSolved()) System.out.println("Solved at generation: " + currentGeneration);
-                gui.update(o, o.getFitnessCost(), ++currentGeneration);
+                if (currentPopulation.getBestFromGeneration().isSolved()) {
+                    System.out.println("Solved at generation: " + currentGeneration);
+                } else {
+                    nextGeneration();
+                    Ordering o = currentPopulation.getBestFromGeneration();
+                    gui.update(o, o.getFitnessCost(), ++currentGeneration);
+
+                }
             } else if(e.getActionCommand().equals("Last Generation")) {
                 for(;currentGeneration < numOfGenerations; ++currentGeneration) {
                     nextGeneration();
@@ -156,8 +83,27 @@ public class main {
                 }
                 Ordering o = currentPopulation.getBestFromGeneration();
                 gui.update(o, o.getFitnessCost(), currentGeneration);
+            } else if(e.getActionCommand().equals("Reset")) {
+                reset();
+            } else if(e.getActionCommand().equals("Swap Fitness Function")) {
+                reset();
+                if(currentPopulation.getFitnessFunction() == Population.FitnessFunction.TETTAMANZI) {
+                    currentPopulation.setFitnessFunction(Population.FitnessFunction.DEFAULT);
+                    gui.setFitnessFunctionText(Population.FitnessFunction.DEFAULT);
+                } else {
+                    currentPopulation.setFitnessFunction(Population.FitnessFunction.TETTAMANZI);
+                    gui.setFitnessFunctionText(Population.FitnessFunction.TETTAMANZI);
+                }
             }
         }
+    }
+
+    private static void reset() {
+        currentPopulation.generateRandomOrderings();
+        nextPopulation = null;
+        currentGeneration = 0;
+        Ordering startOrdering = currentPopulation.getOrdering(0);
+        gui.update(startOrdering, startOrdering.getFitnessCost(), currentGeneration);
     }
 
     private static void nextGeneration() {
@@ -217,6 +163,7 @@ public class main {
         if (inputString == null) System.exit(0);
         while (!isInputValid(inputString, max)) {
             inputString = JOptionPane.showInputDialog(inputTitle);
+            if (inputString == null) System.exit(0);
         }
         return Integer.parseInt(inputString);
     }
@@ -435,6 +382,10 @@ class Population {
         fitnessFunction = ff;
     }
 
+    public FitnessFunction getFitnessFunction() {
+        return fitnessFunction;
+    }
+
     public Ordering getOrdering(int index) {
         if(index < orderings.length) {
             return orderings[index];
@@ -459,7 +410,7 @@ class Population {
         for(int i = 0; i < orderings.length; i++) {
             Collections.shuffle(baseNumbers);
             orderings[i] = new Ordering(baseNumbers);
-            //System.out.println((i + 1)  + " => " + orderings[i]);
+            System.out.println((i + 1)  + " => " + orderings[i]);
         }
     }
 
@@ -891,7 +842,7 @@ class Population {
                 }
             }
         }
-        return 0;
+        return deviation;
     }
 
     private double angleBetweenTwoEdges(double[] edge1, double[] edge2) {
@@ -1050,8 +1001,11 @@ class GUI extends JFrame {
     private JLabel orderingLabel;
     private JLabel currentGenerationLabel;
     private JLabel bestOrderingFitnessCost;
+    private JLabel currentFitnessFunction;
     private JButton generateNextPopulationButton;
     private JButton generateFinalPopulationButton;
+    private JButton swapFitnessFunction;
+    private JButton resetButton;
 
     public GUI(Population initialPopulation, NodeList nodelist,
             int generations, ActionListener listener) {
@@ -1072,6 +1026,19 @@ class GUI extends JFrame {
         repaint();
     }
 
+    public void setFitnessFunctionText(Population.FitnessFunction fc) {
+        switch(fc) {
+            case TETTAMANZI:
+                currentFitnessFunction.setText("Using Tettamanzi Fitness Function");
+                break;
+
+            case DEFAULT:
+                currentFitnessFunction.setText("Using Default Fitness Function");
+                break;
+        }
+
+    }
+
     private void initMainPanel(ActionListener listener) {
         mainPanel = new JPanel();
         mainPanel.setPreferredSize(new Dimension(WIDTH, HEIGHT));
@@ -1081,8 +1048,11 @@ class GUI extends JFrame {
                 + initialPopulation.getBestFromGeneration());
         currentGenerationLabel = new JLabel("Current generation: 0");
         bestOrderingFitnessCost = new JLabel("Ordering Fitness: ");
+        currentFitnessFunction = new JLabel("Using default fitness function");
         generateNextPopulationButton = new JButton("Next Generation");
         generateFinalPopulationButton = new JButton("Last Generation");
+        swapFitnessFunction = new JButton("Swap Fitness Function");
+        resetButton = new JButton("Reset");
 
         graphPainter = new Painter(initialPopulation.getOrdering(0), nodelist,
                 initialPopulation.getChunk());
@@ -1096,9 +1066,15 @@ class GUI extends JFrame {
         bottomPanel.add(Box.createVerticalGlue());
         bottomPanel.add(bestOrderingFitnessCost);
         bottomPanel.add(Box.createVerticalGlue());
+        bottomPanel.add(currentFitnessFunction);
+        bottomPanel.add(Box.createVerticalGlue());
         bottomPanel.add(generateNextPopulationButton);
         bottomPanel.add(Box.createVerticalGlue());
         bottomPanel.add(generateFinalPopulationButton);
+        bottomPanel.add(Box.createVerticalGlue());
+        bottomPanel.add(resetButton);
+        bottomPanel.add(Box.createVerticalGlue());
+        bottomPanel.add(swapFitnessFunction);
         bottomPanel.add(Box.createVerticalGlue());
         mainPanel.add(bottomPanel);
         mainPanel.add(graphPainter);
@@ -1106,13 +1082,9 @@ class GUI extends JFrame {
 
         generateNextPopulationButton.addActionListener(listener);
         generateFinalPopulationButton.addActionListener(listener);
+        resetButton.addActionListener(listener);
+        swapFitnessFunction.addActionListener(listener);
     }
-
-    //@Override
-    //public void actionPerformed(ActionEvent e) {
-        //Ordering o = initialPopulation.getOrdering(2);
-        //update(o, o.getFitnessCost(), 1);
-    //}
 }
 
 class Painter extends JPanel {
